@@ -76,6 +76,9 @@ void trim_trailing(char * str)
 
 int stripping_whitespace(char *un_trimmed, char *trimmed) //this will trim all whitespaces of a command
 {
+    if (strlen(un_trimmed) < 1){
+        return 0;
+    }
     char ch;
     int index = 0;
     //first we need to trimmed the beginning spaces
@@ -131,8 +134,8 @@ void execute(char **c, int numsimplecommands, char *infile, char *outfile, int b
     int fdin;
     if(infile)
     {
-        printf("In file exist!");
-        getchar(); // this use to debug
+        printf("In file exist!\n");
+        //getchar(); // this use to debug
         //we need to check the existence of the infile too
         fdin = open(infile,O_RDONLY); //open a file with read only flag 
     }
@@ -146,6 +149,7 @@ void execute(char **c, int numsimplecommands, char *infile, char *outfile, int b
     int fdout;
     for (int i=0; i <numsimplecommands; i++)
     {
+        printf("%d\n",i);
         dup2(fdin, 0);
         close(fdin);
 
@@ -153,46 +157,60 @@ void execute(char **c, int numsimplecommands, char *infile, char *outfile, int b
         {
             if(outfile)
             {
-                printf("Executing OUTPUT redirect");
-                getchar();
+                printf("Executing OUTPUT redirect!\n");
+                //getchar();
                 fdout = open(outfile,O_WRONLY | O_CREAT); //open a file with write only flag 
             }
         
             else
             {
-                printf("Executing else");
+                printf("Executing else\n");
                 fdout = dup(tmpout);
             }
         
         }
         else //Not last command --> pipe
             {
-                printf("Piping");
+                printf("Piping\n");
                 int fdpipe[2];
-                pipe(fdpipe);
-                fdout = fdpipe[1];
-                fdin = fdpipe[0];
+                if (pipe(fdpipe) != 0)
+                {
+                    //printf("failed to create pipe");
+                }
+                else 
+                {
+                    fdout = fdpipe[1];
+                    fdin = fdpipe[0];
+                    //printf("Finish creat pipe\n");
+                }
+                
             }
         dup2(fdout, 1);
         close(fdout);
 
         ret = fork();
+        //printf("Finish fork?");
         if (ret == 0)
         {
             //here we will start to tokenize our command
     
             char ** argv = command_tokenize(c[i]);
-
+            //printf("Trying to fork\n");
             execvp(argv[0],argv); //it should be (cmd[i].argv[0],cmd[i].argv)
-            perror("Failed when trying to fork");
+            perror("Failed when trying to fork\n");
             exit(1);
         }
+        dup2(tmpin, 0);
+        dup2(tmpout, 1);
     }
-
-    dup2(tmpin, 0);
-    dup2(tmpout, 1);
     close(tmpin);
     close(tmpout);
+
+
+//    dup2(tmpin, 0);
+//    dup2(tmpout, 1);
+//    close(tmpin);
+//    close(tmpout);
 
     if (!background)
     {
@@ -223,26 +241,111 @@ void parse_and_run(char command[], char **c)
     printf("the command is: %s\n",command);
     printf("the length of the command is: %d\n",len);
 
+    int infile_bit = 0; //this will be set if our parsing is reading the infile redirection
+    int outfile_bit = 0; // this will be set if our parsing is reading the outfile redirection
+
     int old_command_index = 0; //keep track of the index of the last command
     //now we need to find the index of the pipe character
     for (int i = 0; i < len; i++ )
     {
-        if(command[i] == 124 || command[i] == 62 || command[i] == 60) //the "|",">","<" character
+        if(command[i] == 124 || command[i] == 62 || command[i] == 60) //the "|",">","<" character and the end of the comamnd
         {
             strncpy (tmp, command, i);
             tmp[i] = '\0';         //add NULL to terminate the copied string
             printf("scanning through: %s\n", tmp);
 
-
-            c[command_index] = malloc(strlen(tmp));
-            if (getSubString(command,c[command_index],old_command_index,i-1) == 0)
+            if (outfile_bit == 0 && infile_bit == 0) // parsing command
             {
-                //trimmimg the command
-
-                printf("The extract command is: %s \n",c[command_index]);
+                c[command_index] = malloc(strlen(tmp));
+                if (getSubString(command,c[command_index],old_command_index,i-1) == 0)
+                {
+                    //trimmimg the command
+                    printf("The extract command is: %s \n",c[command_index]);
+                }
+                command_index ++;
             }
-            command_index ++;
+
+            if (infile_bit == 1) // reading infile descriptor
+            {
+                infile = malloc(strlen(tmp));
+                if (getSubString(command,infile,old_command_index,i-1) == 0)
+                {
+                    //trimmimg the command
+                    printf("The extract infile descriptor is: %s \n",infile);
+                }
+                old_command_index = i+1; //update since now we have a new command
+                infile_bit = 0;
+            }
+
+            if (outfile_bit == 1) // reading outfile descriptor
+            {
+                outfile = malloc(strlen(tmp));
+                if (getSubString(command,outfile,old_command_index,i-1) == 0)
+                {
+                    //trimmimg the command
+                    printf("The extract outfile descriptor is: %s \n",outfile);
+                }
+            }        
             old_command_index = i+1; //update since now we have a new command
+            outfile_bit = 0;
+        
+            if (command[i] == 60)
+            {
+                printf("Find infile!\n");
+                infile_bit = 1;
+                outfile_bit = 0;
+            }
+
+
+            else if (command[i] == 62)
+            {
+                printf("Find outfile!\n");
+                outfile_bit = 1;
+                infile_bit = 0;
+            }        
+        }
+        
+        if (i == len - 1) // reach the end of the string
+        {
+            strncpy (tmp, command, i+1);
+            tmp[i+1] = '\0';         //add NULL to terminate the copied string
+            printf("scanning through: %s\n", tmp);
+
+            if (infile_bit == 1)
+            {
+                infile = malloc(strlen(tmp));
+                if (getSubString(command,infile,old_command_index,i) == 0)
+                {
+                    //trimmimg the command
+                    printf("The extract infile descriptor is: %s \n",infile);
+                }
+                old_command_index = i+1; //update since now we have a new command
+                infile_bit = 0;
+            }
+            else if (outfile_bit == 1)
+            {
+                outfile = malloc(strlen(tmp));
+                if (getSubString(command,outfile,old_command_index,i) == 0)
+                {
+                    //trimmimg the command
+                    printf("The extract outfile descriptor is: %s \n",outfile);
+                }
+                old_command_index = i+1;
+                outfile_bit = 0;
+            }
+            
+            else 
+            {
+                c[command_index] = malloc(strlen(tmp));
+                if (getSubString(command,c[command_index],old_command_index,i) == 0)
+                {
+                    //trimmimg the command
+
+                    printf("The extract command is: %s \n",c[command_index]);
+                }
+                command_index ++;
+                old_command_index = i+1;
+            }
         }
 
     }
@@ -253,13 +356,17 @@ void parse_and_run(char command[], char **c)
     for (int x = 0; x < command_index ;x++)
     {
         printf("Stripping white spaces\n");
-        stripping_whitespace(c[x],trimmed_temp);
+        stripping_whitespace(c[x],trimmed_temp);        
+
         printf("Command: %s with the length is %ld \n",c[x],strlen(c[x]));
 
     }
+
+    stripping_whitespace(infile,trimmed_temp);
+    stripping_whitespace(outfile,trimmed_temp);
     printf("\nNow we executing the command:\n");
 
-    //execute(c,command_index,infile,outfile,background);
+    execute(c,command_index,infile,outfile,background);
     
 
 }
@@ -278,24 +385,20 @@ int main()
         printf("ssh>>");
 
 		fflush(stdout);
-        if (fgets(command, 80, stdin) == NULL) 
-        {
-            fprintf (stderr, ("fgets failed"));
-            return -1;
-        }
-
+        memset(&command[0], 0, sizeof(command)); // clean the command
+        gets(command);
+        
 		command[strcspn(command,"\n")]='\0';
 
 		// Youn can enter quit or \q to quit shell
-		if (strcmp(command,"quit")==0 || strcmp(command,"\\q")==0){
+		if (strcmp(command,"quit")==0 || strcmp(command,"\\q")==0)
+        {
 			should_run=0;
 			continue;
 		}
 		
 		//Parse command and arguments.
 		parse_and_run(command, c);
-
-        //execute(args);
     }
     
     return 0;
